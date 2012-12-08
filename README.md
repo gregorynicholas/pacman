@@ -9,6 +9,6 @@ the `/etc/hosts` file, or configuring local domain name servers.
 
 
 ## how does it work?
-run the proxy server and navigate to the url http://localhost:3128/proxyserver.pac
+run the proxy server and navigate to the url `http://localhost:3128/proxyserver.pac`
 file will best illustrate how the javascript-like syntax will work:
     `python server.py`
