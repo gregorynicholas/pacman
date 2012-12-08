@@ -1,4 +1,4 @@
-# test proxy web server written in python.
+# proxy web server written in python.
 
 ## what is it used for?
 it serves a local server, which proxies requests from one domain to another.
@@ -12,3 +12,9 @@ the `/etc/hosts` file, or configuring local domain name servers.
 run the proxy server and navigate to the url `http://localhost:3128/proxyserver.pac`
 file will best illustrate how the javascript-like syntax will work:
     `python server.py`
+
+
+## use cases?
+- useful for developing and testing domains and sub-domains on a local machine.
+- debug cross domain cookies
+- debug iframe message passing
