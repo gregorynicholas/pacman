@@ -2,29 +2,34 @@
 '''Test proxy web server written in python. Useful for developing for and
 testing domains and sub domains.'''
 
-import BaseHTTPServer, SocketServer
-import select, socket, urlparse
+import sys
+import yaml
+import getopt
 import logging
 import logging.handlers
-import sys
-import getopt
 import threading
-from time import sleep
+import BaseHTTPServer, SocketServer
+import select, socket, urlparse
 from types import FrameType, CodeType
 from signal import signal, SIGINT
 
-DEFAULT_LOG_FILENAME = "proxyserver.log"
-HOSTNAME = 'localhost'
-PROXY_PAC_PATH = '/proxyserver.pac'
-PROXY_HOSTNAME = 'somedomain.com'
-PORT = 3128
-FORWARD_HOSTNAME = 'localhost'
-FORWARD_PORT = 8080
+SERVERS_PATH = 'servers.yaml'
 
+def get_servers(path):
+  f = open(path, 'r')
+  result = yaml.safe_load(f)
+  f.close()
+  return result
 
 class ProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
   __base = BaseHTTPServer.BaseHTTPRequestHandler
   __base_handle = __base.handle
+
+  def __init__(self, *args, **kw):
+    BaseHTTPServer.BaseHTTPRequestHandler.__init__(self, *args, **kw)
+    self.servers = get_servers(SERVERS_PATH)
+    self.server_hosts = self.servers.get('hosts')
+    self.proxy_config = self.servers.get('proxy')
 
   def handle(self):
     (ip, port) = self.client_address
@@ -35,11 +40,10 @@ class ProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     else:
       self.__base_handle()
 
-  def _connect_to(self, soc):
-    host_port =(FORWARD_HOSTNAME, FORWARD_PORT)
-    self.server.logger("connect to %s:%d", host_port[0], host_port[1])
+  def _connect_to(self, host, port, soc):
+    self.server.logger("connect to %s:%d", host, port)
     try:
-      soc.connect(host_port)
+      soc.connect(port)
     except socket.error, arg:
       try:
         msg = arg[1]
@@ -49,7 +53,7 @@ class ProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
       return 0
     return 1
 
-  def output_proxy(self):
+  def write_proxy_pac(self):
     # send requests to google apps domain to direct
     self.wfile.write('''
     function FindProxyForURL(url, host) {
@@ -60,20 +64,24 @@ class ProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
       if (shExpMatch(url,"*%s*"))
         return "PROXY %s:%d";
       return "DIRECT";
-    }''' % (PROXY_HOSTNAME, PROXY_HOSTNAME, HOSTNAME, PORT))
+    }''' % (
+      self.server_hosts.get('host'), self.server_hosts.get('host'),
+      self.proxy_config.get('host'), self.proxy_config.get('port'),
+    ))
     return
 
   def do_GET(self):
     (scm, netloc, path, params, query, fragment) = urlparse.urlparse(
       self.path, 'http')
 
-    if self.path == PROXY_PAC_PATH:
-      return self.output_proxy()
+    if self.path == self.proxy_config.get('path'):
+      return self.write_proxy_pac()
 
     if scm != 'http' or fragment or not netloc:
       self.send_error(400, "bad url %s" % self.path)
       return
 
+    server_host = self.server_hosts.get(netloc)
     message = ''
     if "Content-Length" in self.headers:
       content_length = self.headers["Content-Length"]
@@ -84,14 +92,14 @@ class ProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 
     soc = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-      if self._connect_to(soc):
+      if self._connect_to(server_host.name, server_host.port, soc):
         self.log_request()
         soc.send("%s %s %s\r\n" %(
           self.command, urlparse.urlunparse(('', '', path, params, query, '')),
           self.request_version))
         self.headers['Connection'] = 'close'
         del self.headers['Proxy-Connection']
-        print 'URL: %s request' % self.path
+        # print 'URL: %s request' % self.path
         for key_val in self.headers.items():
           soc.send("%s: %s\r\n" % key_val)
           print '%s: %s\n' % key_val
@@ -135,23 +143,22 @@ class ProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 
 
 class ThreadingHTTPServer(SocketServer.ThreadingMixIn, BaseHTTPServer.HTTPServer):
-  def __init__(self, server_address, request_handler_class, logger=None):
+  def __init__(self, server_address, request_handler_class):
     BaseHTTPServer.HTTPServer.__init__(
       self, server_address, request_handler_class)
-    self.logger = logger
+    self.logger = self.create_logger()
 
-
-def create_logger():
-  _logger = logging.getLogger("TinyHTTPProxy")
-  _logger.setLevel(logging.INFO)
-  hndlr = logging.StreamHandler()
-  fmt = logging.Formatter("[%(asctime)-12s.%(msecs)03d] "
-    "%(levelname)-8s {%(name)s %(threadName)s}"
-    " %(message)s",
-    "%Y-%m-%d %H:%M:%S")
-  hndlr.setFormatter(fmt)
-  _logger.addHandler(hndlr)
-  return _logger
+  def create_logger(self):
+    result = logging.getLogger("TinyHTTPProxy")
+    result.setLevel(logging.INFO)
+    hldr = logging.StreamHandler()
+    format = logging.Formatter("[%(asctime)-12s.%(msecs)03d] "
+      "%(levelname)-8s {%(name)s %(threadName)s}"
+      " %(message)s",
+      "%Y-%m-%d %H:%M:%S")
+    hldr.setFormatter(format)
+    result.addHandler(hldr)
+    return result
 
 
 def usage(msg=None):
@@ -173,6 +180,7 @@ def handler(signo, frame):
 
 def main():
   PORT = 3128
+  HOST = 'localhost'
   exit_event = threading.Event()
 
   try:
@@ -189,13 +197,12 @@ def main():
       usage()
       return 0
 
-  logger = create_logger()
   signal(SIGINT, handler)
-  server_address = (HOSTNAME, PORT)
+  server_address = (HOST, PORT)
   ProxyHandler.protocol = "HTTP/1.0"
-  httpd = ThreadingHTTPServer(server_address, ProxyHandler, logger)
+  httpd = ThreadingHTTPServer(server_address, ProxyHandler)
   sockname = httpd.socket.getsockname()
-  print "Servring HTTP on", sockname[0], "port", sockname[1]
+  httpd.logger.info("Serving HTTP on", sockname[0], "port", sockname[1])
   active_threads_count = 0
   max_active_threads_count = 1000
   while not exit_event.isSet():
@@ -203,15 +210,15 @@ def main():
       httpd.handle_request()
       active_threads_count += 1
       if active_threads_count >= max_active_threads_count:
-        logger.info("Number of active threads: %s",
+        httpd.logger.info("Number of active threads: %s",
           threading.activeCount())
         active_threads_count = 0
     except select.error, err:
       if err[0] == 4 and exit_event.isSet():
         pass
       else:
-        logger.critical("Errno: %d - %s", err[0], err[1])
-  logger.info("Server shutdown..")
+        httpd.logger.critical("Errno: %d - %s", err[0], err[1])
+  httpd.logger.info("Server shutdown..")
   return 0
 
 
