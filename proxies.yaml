@@ -1,0 +1,15 @@
+proxyserver:
+  host: localhost
+  port: 3128
+  path: /proxyserver.pac
+
+proxies:
+  - host:
+    name: somedomain1.com
+    forward_host: localhost
+    forward_port: 8080
+
+  - host:
+    name: somedomain2.com
+    forward_host: localhost
+    forward_port: 8181

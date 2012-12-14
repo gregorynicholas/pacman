@@ -13,7 +13,7 @@ import select, socket, urlparse
 from types import FrameType, CodeType
 from signal import signal, SIGINT
 
-SERVERS_PATH = 'servers.yaml'
+PROXIES_PATH = 'proxies.yaml'
 
 def get_servers(path):
   f = open(path, 'r')
@@ -24,12 +24,27 @@ def get_servers(path):
 class ProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
   __base = BaseHTTPServer.BaseHTTPRequestHandler
   __base_handle = __base.handle
+  _servers = None
+  _proxy_hosts = None
+  _proxy_config = None
 
-  def __init__(self, *args, **kw):
-    BaseHTTPServer.BaseHTTPRequestHandler.__init__(self, *args, **kw)
-    self.servers = get_servers(SERVERS_PATH)
-    self.server_hosts = self.servers.get('hosts')
-    self.proxy_config = self.servers.get('proxy')
+  @property
+  def servers(self):
+    if self._servers is None:
+      self._servers = get_servers(PROXIES_PATH)
+    return self._servers
+
+  @property
+  def proxy_hosts(self):
+    if self._proxy_hosts is None:
+      self._proxy_hosts = self.servers.get('proxies')
+    return self._proxy_hosts
+
+  @property
+  def proxy_config(self):
+    if self._proxy_config is None:
+      self._proxy_config = self.servers.get('proxyserver')
+    return self._proxy_config
 
   def handle(self):
     (ip, port) = self.client_address
@@ -54,34 +69,28 @@ class ProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     return 1
 
   def write_proxy_pac(self):
-    # send requests to google apps domain to direct
-    self.wfile.write('''
+    result = '''
     function FindProxyForURL(url, host) {
-      if (shExpMatch(url,"*mail.%s*"))
-        return "DIRECT";
-      if (shExpMatch(host,"*mail.%s*"))
-        return "DIRECT";
-      if (shExpMatch(url,"*%s*"))
-        return "PROXY %s:%d";
+    '''
+    for host in self.proxy_hosts:
+      result += '''
+      if (shExpMatch(url,"*{name}*"))
+        return "PROXY {forward_host}:{forward_port}";
+      '''.format(**host)
+    result += '''
       return "DIRECT";
-    }''' % (
-      self.server_hosts.get('host'), self.server_hosts.get('host'),
-      self.proxy_config.get('host'), self.proxy_config.get('port'),
-    ))
-    return
+    }'''
+    self.wfile.write(result)
 
   def do_GET(self):
     (scm, netloc, path, params, query, fragment) = urlparse.urlparse(
       self.path, 'http')
-
     if self.path == self.proxy_config.get('path'):
       return self.write_proxy_pac()
-
     if scm != 'http' or fragment or not netloc:
       self.send_error(400, "bad url %s" % self.path)
       return
-
-    server_host = self.server_hosts.get(netloc)
+    server_host = self.proxy_hosts.get(netloc)
     message = ''
     if "Content-Length" in self.headers:
       content_length = self.headers["Content-Length"]
@@ -130,10 +139,11 @@ class ProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             count = 0
       if count == max_idling: break
 
-  do_HEAD = do_GET
-  do_POST = do_GET
-  do_PUT  = do_GET
-  do_DELETE=do_GET
+  do_PUT     = do_GET
+  do_HEAD    = do_GET
+  do_POST    = do_GET
+  do_DELETE  = do_GET
+  do_OPTIONS = do_GET
 
   def log_message(self, format, *args):
     self.server.logger.info("%s %s", self.address_string(), format % args)
@@ -202,7 +212,7 @@ def main():
   ProxyHandler.protocol = "HTTP/1.0"
   httpd = ThreadingHTTPServer(server_address, ProxyHandler)
   sockname = httpd.socket.getsockname()
-  httpd.logger.info("Serving HTTP on", sockname[0], "port", sockname[1])
+  httpd.logger.info("Serving HTTP on: %s port: %s", sockname[0], sockname[1])
   active_threads_count = 0
   max_active_threads_count = 1000
   while not exit_event.isSet():
