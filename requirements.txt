@@ -1,2 +1,4 @@
-pyyaml
-virtualenv
+nose==1.2.1
+nose-cov==1.6
+pyyaml==3.10
+virtualenv==1.8.4

@@ -1,58 +1,40 @@
 #!/usr/bin/env python
 """
-python-proxy-server
------------------------
+  pacman
+  ------
 
-## what is it used for?
-it serves a local server, which proxies requests from one domain to another.
-
-this would allow a developer to work locally, and be able to route all requests
-to `somedomain.com` to a server of their choice, eliminating the need to modify
-the `/etc/hosts` file, or configuring local domain name servers.
-
-
-## how does it work?
-run the proxy server and navigate to the url `http://localhost:3128/proxyserver.pac`
-file will best illustrate how the javascript-like syntax will work:
-    `python server.py`
-
-
-## use cases?
-- useful for developing and testing domains and sub-domains on a local machine.
-- debug cross domain cookies
-- debug iframe message passing
-
-
-Links
-`````
-
-* `documentation <http://packages.python.org/python-proxy-server>`_
-* `development version
-  <http://github.com/gregorynicholas/python-proxy-server/zipball/master#egg=python-proxy-server-dev>`_
+  pacfile proxy web server written in python. useful for developing and testing
+  cross-domain applications. one step install, easily configured via yaml.
 
 """
 from setuptools import setup
 
+
+with open("requirements.txt", "r") as f:
+  requires = f.readlines()
+
+with open("README.md", "r") as f:
+  long_description = f.read()
+
+
 setup(
-  name='python-proxy-server',
-  version='1.0.0',
-  url='http://github.com/gregorynicholas/python-proxy-server',
+  name='pacman',
+  version='0.0.1',
+  url='http://github.com/gregorynicholas/pacman',
   license='MIT',
   author='gregorynicholas',
-  description='Proxy web server written in python.',
-  long_description=__doc__,
-  py_modules=['server', 'server_tests'],
+  author_email='gn@gregorynicholas.com',
+  description=__doc__,
+  long_description=long_description,
+  py_modules=['pacman'],
   include_package_data=True,
-  data_files=['proxies.yaml'],
+  data_files=['pacman.yaml'],
   zip_safe=False,
   platforms='any',
-  install_requires=[
-    'pyyaml',
-  ],
+  install_requires=requires,
   tests_require=[
-    'nose',
-  ],
-  dependency_links = [
+    'nose==1.2.1',
+    'nose-cov==1.6',
   ],
   test_suite='nose.collector',
   classifiers=[
