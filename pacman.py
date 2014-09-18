@@ -100,19 +100,19 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
   @property
   def proxy_config(self):
-    if self._proxy_config is None:
+    if not hasattr(self, '_proxy_config') or self._proxy_config is None:
       self._proxy_config = get_proxy_config(PROXIES_PATH)
     return self._proxy_config
 
   @property
   def proxies(self):
-    if self._proxies is None:
+    if not hasattr(self, '_proxies') or self._proxies is None:
       self._proxies = self.proxy_config.get('proxies')
     return self._proxies
 
   @property
   def pacfile_config(self):
-    if self._pacfile_config is None:
+    if not hasattr(self, '_pacfile_config') or self._pacfile_config is None:
       self._pacfile_config = self.proxy_config.get('pacfile')
     return self._pacfile_config
 
