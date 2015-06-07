@@ -7,15 +7,10 @@
   cross-domain applications. one step install, easily configured via yaml.
 
 
-  :copyright: (c) 2013 by gregorynicholas.
+  :copyright: (c) 2015 by gregorynicholas.
   :license: BSD, see LICENSE for more details.
 """
-
 import sys
-try:
-  import yaml
-except ImportError:
-  print "please install yaml dependency.."
 import logging
 import logging.handlers
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
@@ -25,12 +20,17 @@ from threading import Event
 from threading import activeCount
 import select
 import socket
-import urlparse
+from urlparse import urlparse, urlunparse
 from types import FrameType, CodeType
 from signal import signal, SIGINT
 
+try:
+  import yaml
+except ImportError:
+  print "python-yaml dependency not installed.."
 
-usage = """\
+
+USAGE = """\
 pacman
 
 pacman [OPTIONS] ...
@@ -48,42 +48,20 @@ OPTIONS:
 """
 
 
-PROXIES_PATH = "pacman.yaml"
+CONFIG_PATH = "pacman.yaml"
 # pylint #E501 disable
 LOG_FMT = "[%(asctime)-12s] %(levelname)-8s {%(name)s \
 %(threadName)s} %(message)s "
 
 
-def get_proxy_config(path):
+def load_proxy_config(path):
   """
   load server config definitions from a yaml file.
   """
-  f = open(path, 'r')
-  result = yaml.safe_load(f)
-  f.close()
+  with open(path, 'r') as f:
+    result = yaml.safe_load(f)
+    f.close()
   return result
-
-
-class ProxyPAC(object):
-  """
-  """
-  def __init__(self):
-    """
-    """
-
-  def write(self):
-    result = """
-    function FindProxyForURL(url, host) {
-    """
-    for host in self.proxy_hosts:
-      result += """
-      if (shExpMatch(url,"*{name}*"))
-        return "PROXY {forward_host}:{forward_port}";
-      """.format(**host)
-    result += """
-      return "DIRECT";
-    }"""
-    self.wfile.write(result)
 
 
 class ProxyHandler(BaseHTTPRequestHandler):
@@ -94,21 +72,22 @@ class ProxyHandler(BaseHTTPRequestHandler):
   def __init__(self, *args, **kwargs):
     BaseHTTPRequestHandler.__init__(self, *args, **kwargs)
     self.protocol = "HTTP/1.0"
+    self.protocol_scheme = 'http'
     self._proxy_config = None
-    self._proxy_hosts = None
+    self._proxy_rules = None
     self._pacfile_config = None
 
   @property
   def proxy_config(self):
     if not hasattr(self, '_proxy_config') or self._proxy_config is None:
-      self._proxy_config = get_proxy_config(PROXIES_PATH)
+      self._proxy_config = load_proxy_config(CONFIG_PATH)
     return self._proxy_config
 
   @property
-  def proxies(self):
-    if not hasattr(self, '_proxies') or self._proxies is None:
-      self._proxies = self.proxy_config.get('proxies')
-    return self._proxies
+  def proxy_rules(self):
+    if not hasattr(self, '_proxy_rules') or self._proxy_rules is None:
+      self._proxy_rules = self.proxy_config.get('proxy_rules')
+    return self._proxy_rules
 
   @property
   def pacfile_config(self):
@@ -116,108 +95,183 @@ class ProxyHandler(BaseHTTPRequestHandler):
       self._pacfile_config = self.proxy_config.get('pacfile')
     return self._pacfile_config
 
+
   def handle(self):
+    """
+    handles all requests
+    """
     (ip, port) = self.client_address
-    self.server.logger.info("Request from '%s'", ip)
+    self.server.logger.info("handling request from ip: {}".format(ip))
+
     if hasattr(self, 'allowed_clients') and ip not in self.allowed_clients:
       self.raw_requestline = self.rfile.readline()
       if self.parse_request():
         self.send_error(403)
+
     else:
       return BaseHTTPRequestHandler.handle(self)
 
-  def write_proxy_pac(self):
+
+  def render_pacfile(self):
     """
     renders the proxy pacfile from the definitions in the proxy configuration.
     """
-    result = """
-    function FindProxyForURL(url, host) {
-    """
-    for host in self.proxies:
-      result += """
-      if (shExpMatch(url,"*{name}*"))
+    proxy_rule = """
+      if (shExpMatch(url, "*{name}*"))
         return "PROXY {forward_host}:{forward_port}";
-      """.format(**host)
-    result += """
+    """
+    proxy_rules = [proxy_rule.format(**host) for host in self.proxy_rules]
+
+    body = """
+    function FindProxyForURL(url, host) {
+      {}
       return "DIRECT";
-    }"""
-    self.wfile.write(result)
+    }
+    """.format(''.join(proxy_rules))
+
+    self.wfile.write(body)
+
+
+  def urlparse(self, scheme, host, path, params, query, fragment):
+    """
+    parses the result of `urlparse()` to a dict.
+    """
+    return {
+      'scheme': scheme,
+      'host': host,
+      'path': path,
+      'params': params,
+      'query': query,
+      'fragment': fragment}
+
+
+  def urlunparse(self, request):
+    urlunparse(
+      ('', '', request['path'], request['params'], request['query'], ''))
+
 
   def do_GET(self):
-    (scm, netloc, path, params, query, fragment) = urlparse.urlparse(
-      self.path, 'http')
-    if self.path == self.pacfile_config.get('path'):
-      return self.write_proxy_pac()
-    if scm != 'http' or fragment or not netloc:
-      self.send_error(400, "bad url %s" % self.path)
-      return
-    server_host = self.proxy_hosts.get(netloc)
-    message = ''
-    if "Content-Length" in self.headers:
-      content_length = self.headers["Content-Length"]
-      print "message length: ", content_length
-      if content_length > 0:
-        message = self.rfile.read(int(content_length))
-        print "message: ", message
+    """
+    handles a GET request
+    """
+    request = self.urlparse(*urlparse(self.path, self.protocol_scheme))
 
-    soc = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if self.is_pacfile_path():
+      return self.render_pacfile()
+
+    # TODO: for now, don't know how to handle fragments..
+    if request['fragment']:
+      self.send_error(400, "unsupported url: {}".format(self.path))
+      return
+
+    # TODO: handling other request types unimplemented..
+    if request['scheme'] != 'http':
+      self.send_error(400, "unsupported url: {}".format(self.path))
+      return
+
+    if not request['host']:
+      self.send_error(400, "bad url: {}".format(self.path))
+      return
+
+    self.send_proxy_request(request, self.proxy_rules[request['host']])
+
+
+  def is_pacfile_path(self):
+    """
+    returns a boolean if the current request path is the pacfile.
+    """
+    return self.path.lower() == self.pacfile_config['path'].lower()
+
+
+  def send_proxy_request(self, request, forward_proxy):
+    """
+    fowards a proxy request.
+    """
+    body = ''
+    length = self.headers.get("Content-Length", 0)
+    if length > 0:
+      body = self.rfile.read(int(length))
+      self.server.logger.debug(
+        "body (content-length {}): ".format(length, body))
+
+    proxy_s = self.create_proxy_socket()
     try:
-      if self._connect_to(server_host.name, server_host.port, soc):
+      if self.proxy_socket_connect(proxy_s, forward_proxy.port):
         self.log_request()
-        soc.send("%s %s %s\r\n" % (
-          self.command, urlparse.urlunparse(('', '', path, params, query, '')),
-          self.request_version))
+
+        proxy_s.send("{} {} {}\r\n".format(
+          self.command, self.urlunparse(request), self.protocol))
+
         self.headers['Connection'] = 'close'
         del self.headers['Proxy-Connection']
-        # print 'URL: %s request' % self.path
-        for key_val in self.headers.items():
-          soc.send("%s: %s\r\n" % key_val)
-          print '%s: %s\n' % key_val
-        soc.send("\r\n%s\r\n" % message)
-        self._read_write(soc)
+        self.server.logger.debug('URL: {} request'.format(self.path))
+
+        # send headers
+        [proxy_s.send("{}: {}\r\n".format(*kv)) for kv in self.headers.items()]
+
+        # send body
+        proxy_s.send("\r\n{}\r\n".format(body))
+        self.socket_rw(proxy_s)
+    except Exception, e:
+      self.server.logger.exception(e)
+
     finally:
-      soc.close()
+      proxy_s.close()
       self.connection.close()
 
-  def _connect_to(self, host, port, soc):
-    self.server.logger.debug("connect to %s:%d", host, port)
+
+  def create_proxy_socket(self):
+    return socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+
+  def proxy_socket_connect(self, proxy_s, port):
+    self.server.logger.debug("connect to {}:{}".format(proxy_s, port))
     try:
-      soc.connect(port)
+      proxy_s.connect(port)
+
     except socket.error, arg:
+      self.server.logger.exception(e)
       try:
         msg = arg[1]
       except:
         msg = arg
       self.send_error(404, msg)
       return 0
+
     return 1
 
-  def _read_write(self, soc, max_idling=20, local=False):
+
+  def socket_rw(self, proxy_s, max_idle_ticks=20):
     """
-      :param soc:
-      :param max_idling:
+      :param proxy_s:
+      :param max_idle_ticks:
       :param local:
     """
-    iw = [self.connection, soc]
+    iw = [self.connection, proxy_s]
     ow = []
-    count = 0
+    timer = 0
+
     while 1:
-      count += 1
+      timer += 1
       (ins, _, exs) = select.select(iw, ow, iw, 1)
       if exs:
         break
+
       if ins:
         for i in ins:
-          if i is soc:
+          if i is proxy_s:
             out = self.connection
           else:
-            out = soc
+            out = proxy_s
+
           data = i.recv(8192)
           if data:
             out.send(data)
-            count = 0
-      if count == max_idling:
+            timer = 0
+
+      if timer == max_idle_ticks:
         break
+
 
   do_PUT = do_GET
   do_HEAD = do_GET
@@ -225,14 +279,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
   do_DELETE = do_GET
   do_OPTIONS = do_GET
 
-  def log_message(self, format, *args):
-    self.server.logger.info("%s %s", self.address_string(), format % args)
-
-  def log_error(self, format, *args):
-    self.server.logger.error("%s %s", self.address_string(), format % args)
-
 
 class ProxyHTTPServer(ThreadingMixIn, HTTPServer):
+  """
+  """
+
   def __init__(self, server_address, request_handler_class):
     HTTPServer.__init__(self, server_address, request_handler_class)
     self.logger = self.create_logger()
@@ -249,8 +300,8 @@ class ProxyHTTPServer(ThreadingMixIn, HTTPServer):
 
 class ProxyContext(object):
   """
-  `ProxyHTTPServer` context object. runs an instance of a `ProxyHTTPServer`,
-  manages active threading, & binds to command line exit sigals.
+  `ProxyHTTPServer` context object. runs an instance of a `ProxyHTTPServer`.
+  manages threading & binds to command line exit sigals.
   """
 
   def __init__(self, host, port, max_threads):
@@ -259,39 +310,47 @@ class ProxyContext(object):
       :param port: port integer to bind the proxy server to.
       :param max_threads: maximum number of active threads.
     """
-    self.max_threads = max_threads
-    self.active_thread_count = 0
     self.host = host
     self.port = port
+    self.max_threads = max_threads
+    self.active_thread_count = 0
     self.handler_class = ProxyHandler
-    self.set_exit_handler()
+    self.set_sigint_handler()
+
 
   @property
   def hostname(self):
     return (self.host, self.port)
 
+
   def run(self):
     """
-    runs the `ProxyHTTPServer`.
+    runs the `ProxyHTTPServer`
     """
     self.server = ProxyHTTPServer(self.hostname, self.handler_class)
-    self.sock = self.server.socket.getsockname()
+
+    host, port = self.server.socket.getsockname()[:2]
     self.server.logger.info(
-      "serving http on: %s port: %s", self.sock[0], self.sock[1])
+      "serving http on host: {} port: {}".format(host, port))
+
     self.active_thread_count = 0
-    while not self.exit_event.isSet():
+
+    while not self.sigint_event.isSet():
       try:
         self.server.handle_request()
         self.active_thread_count = activeCount()
         self.server.logger.info(
-          "active thread count: %s", self.active_thread_count)
+          "active thread count: {}".format(self.active_thread_count))
+
         if self.active_thread_count >= self.max_threads:
           self.on_max_threads()
-      except select.error, e:
-        print 'select.error', e
-        self, self.on_exit_event(e[0], e[1])
+
+      except select.error, err:
+        self.server.logger.debug("select.error: {}".format(e))
+        self.on_sigint(*err)
 
     self.server.logger.info("proxy server shutdown..")
+
 
   def on_max_threads(self):
     self.server.logger.warn(
@@ -299,20 +358,25 @@ class ProxyContext(object):
     # todo: more action to take here?
     self.active_thread_count = 0
 
-  def set_exit_handler(self):
+
+  def set_sigint_handler(self):
     """
     binds a signal to listen for `KeyboardInterrupt` events.
     """
-    self.exit_event = Event()
-    signal(SIGINT, self.exit_handler)
+    self.sigint_event = Event()
+    signal(SIGINT, self.sigint_handler)
 
-  def exit_handler(self, signo, frame):
+
+  def sigint_handler(self, sigint, frame):
     """
     event handler method for `KeyboardInterrupt` events.
 
-      :param signo:
+      :param sigint:
       :param frame:
     """
+    self.server.logger.debug(
+      "SIGINT event received: {}, {}".format(sigint, frame))
+
     while frame and isinstance(frame, FrameType):
       if frame.f_code and isinstance(frame.f_code, CodeType):
         # this goes through the stack to find the instance of the ProxyContext
@@ -320,18 +384,20 @@ class ProxyContext(object):
         if "self" in frame.f_code.co_varnames:
           _self = frame.f_locals["self"]
           if isinstance(_self, ProxyContext):
-            _self.exit_event.set()
+            _self.sigint_event.set()
             exit(0)
       frame = frame.f_back
 
-  def on_exit_event(self, code, msg):
+
+  def on_sigint(self, code, msg, *args):
     """
       :param code:
       :param msg:
     """
-    print "on_exit_event", code, msg
-    if code != 4 and not self.exit_event.isSet():
-      self.server.logger.critical("error: code: %d, %s", code, msg)
+    self.server.logger.debug("on_sigint, code: {} msg: {}".format(code, msg))
+
+    if code != 4 and not self.sigint_event.isSet():
+      self.server.logger.critical("on_sigint error, code: {}, {}".format(code, msg))
       self.fail(msg)
 
 
@@ -341,7 +407,7 @@ def fail(message, *args):
 
 
 def usage():
-  print >> sys.stdout, usage,
+  print >> sys.stdout, USAGE,
 
 
 parser = OptionParser(
@@ -365,7 +431,7 @@ parser.add_option(
 
 parser.add_option(
   "--proxy-config", dest="proxy_config", default="pacman.yaml",
-  help="proxy configuration yaml file.")
+  help="proxy pacfile configuration yaml file.")
 
 parser.add_option(
   "--log-level", dest="log_level", metavar="LEVEL",
@@ -374,9 +440,10 @@ parser.add_option(
 
 def main():
   (options, args) = parser.parse_args()
+
   ProxyContext(
     options.host, options.port, options.max_threads).run()
-  sys.exit(0)
+  exit(0)
 
 
 if __name__ == '__main__':

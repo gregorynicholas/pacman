@@ -13,9 +13,6 @@ from setuptools import setup
 with open("requirements.txt", "r") as f:
   requires = f.readlines()
 
-with open("README.md", "r") as f:
-  long_description = f.read()
-
 
 setup(
   name='pacman',
@@ -25,13 +22,15 @@ setup(
   author='gregorynicholas',
   author_email='gn@gregorynicholas.com',
   description=__doc__,
-  long_description=long_description,
+  long_description=__doc__,
   py_modules=['pacman'],
   include_package_data=True,
   data_files=['pacman.yaml'],
   zip_safe=False,
   platforms='any',
-  install_requires=requires,
+  install_requires=[
+    'pyyaml==3.10',
+  ],
   tests_require=[
     'nose==1.2.1',
     'nose-cov==1.6',
