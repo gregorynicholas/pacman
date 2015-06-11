@@ -1,11 +1,36 @@
 pacman
 ======
 
-### introduction
-
 a python web proxy server to nail cross-domain application development.
 one of the most essential utilities for the cross-domain application toolbelt
 since resurrections n' shit.
+
+
+<br>
+**build-status:**
+
+`master  ` [![travis-ci build-status: master](https://secure.travis-ci.org/gregorynicholas/pacman.svg?branch=master)](https://travis-ci.org/gregorynicholas/pacman)
+<br>
+`develop ` [![travis-ci build-status: develop](https://secure.travis-ci.org/gregorynicholas/pacman.svg?branch=develop)](https://travis-ci.org/gregorynicholas/pacman)
+
+
+**links:**
+
+- [homepage](http://gregorynicholas.github.io/pacman)
+- [source](http://github.com/gregorynicholas/pacman)
+- [python-package](http://packages.python.org/pacman)
+- [changelog](https://github.com/gregorynicholas/pacman/blob/master/CHANGES.md)
+- [github-issues](http://github.com/gregorynicholas/pacman/issues)
+- [travis-ci](http://travis-ci.org/gregorynicholas/pacman)
+- [semantic versioning specification](http://semver.org)
+
+
+<br>
+-----
+<br>
+
+
+### introduction
 
 
 -----
@@ -23,7 +48,9 @@ the `/etc/hosts` file, or configuring local domain name servers.
 ### how does it work?
 run the proxy server and navigate to the url `http://localhost:3128/pacman.pac`
 file will best illustrate how the javascript-like syntax will work:
-    `pacman`
+
+    $ pacman
+    $ open 'http://localhost:3128/pacman.pac'
 
 
 ### use cases?
@@ -32,7 +59,21 @@ file will best illustrate how the javascript-like syntax will work:
 - debug iframe message passing
 
 
+<br>
 -----
+<br>
+
+
+### installation
+
+install keybump with pip
+
+    $ pip install keybump==3.0.1
+
+
+<br>
+-----
+<br>
 
 
 ### usage
@@ -45,13 +86,3 @@ file will best illustrate how the javascript-like syntax will work:
       --max-threads         maximum number of active threads.
       --log-level           logging output level.defaulst
       --proxy-config        proxy configuration yaml file.
-
-
------
-
-
-### links
-
-* [docs](http://gregorynicholas.github.io/pacman)
-* [source](http://github.com/gregorynicholas/pacman)
-* [package](http://packages.python.org/pacman)
