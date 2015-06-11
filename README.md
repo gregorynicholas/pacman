@@ -68,7 +68,7 @@ file will best illustrate how the javascript-like syntax will work:
 
 install keybump with pip
 
-    $ pip install keybump==3.0.1
+    $ pip install pacman
 
 
 <br>
